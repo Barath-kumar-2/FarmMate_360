@@ -15,13 +15,15 @@ with open(model_path, 'rb') as f:
 
 # --- Helper: simulate weather based on season ---
 def get_weather(season):
-    if season.lower() == "kharif":
+    season = season.lower()
+
+    if season == "kharif":
         return {
             "temperature": random.uniform(25, 35),
             "humidity": random.uniform(70, 90),
             "rainfall": random.uniform(150, 300)
         }
-    elif season.lower() == "rabi":
+    elif season == "rabi":
         return {
             "temperature": random.uniform(15, 25),
             "humidity": random.uniform(40, 60),
@@ -34,14 +36,41 @@ def get_weather(season):
             "rainfall": random.uniform(10, 50)
         }
 
-# --- Helper: default soil values (approximation) ---
-def get_soil_values():
+# --- Helper: default soil values ---
+def get_soil_values(pincode):
+    # Future: replace with real soil API / dataset
     return {
-        "N": 50,
-        "P": 40,
-        "K": 40,
-        "ph": 6.5
+        "N": random.randint(30, 70),
+        "P": random.randint(20, 60),
+        "K": random.randint(20, 60),
+        "ph": round(random.uniform(5.5, 7.5), 2)
     }
+
+# --- Reasoning engine ---
+def get_reason(crop, weather, soil, farm_size):
+    reasons = []
+
+    # Weather-based reasoning
+    if weather["rainfall"] > 150:
+        reasons.append("Suitable for high rainfall")
+    elif weather["rainfall"] < 50:
+        reasons.append("Suitable for low rainfall conditions")
+
+    # Soil-based reasoning
+    if 6 <= soil["ph"] <= 7:
+        reasons.append("Optimal soil pH")
+    else:
+        reasons.append("Tolerates varied soil pH")
+
+    # Farm size reasoning
+    if farm_size < 2:
+        reasons.append("Good for small-scale farming")
+    elif farm_size > 5:
+        reasons.append("Suitable for large-scale farming")
+    else:
+        reasons.append("Moderate farm size compatible")
+
+    return reasons
 
 @app.route('/')
 def home():
@@ -49,42 +78,62 @@ def home():
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    data = request.json
+    try:
+        data = request.json
 
-    pincode = data.get('pincode')
-    season = data.get('season')
+        pincode = data.get('pincode')
+        season = data.get('season')
+        farm_size = float(data.get('farm_size', 1))
 
-    if not pincode or not season:
-        return jsonify({"error": "Missing pincode or season"}), 400
+        if not pincode or not season:
+            return jsonify({"error": "Missing pincode or season"}), 400
 
-    # Simulate weather
-    weather = get_weather(season)
+        # Simulated inputs
+        weather = get_weather(season)
+        soil = get_soil_values(pincode)
 
-    # Get soil values
-    soil = get_soil_values()
+        # Model input
+        sample = pd.DataFrame([{
+            'N': soil['N'],
+            'P': soil['P'],
+            'K': soil['K'],
+            'temperature': weather['temperature'],
+            'humidity': weather['humidity'],
+            'ph': soil['ph'],
+            'rainfall': weather['rainfall']
+        }])
 
-    # Combine inputs
-    sample = pd.DataFrame([{
-        'N': soil['N'],
-        'P': soil['P'],
-        'K': soil['K'],
-        'temperature': weather['temperature'],
-        'humidity': weather['humidity'],
-        'ph': soil['ph'],
-        'rainfall': weather['rainfall']
-    }])
+        # Get probabilities
+        probs = model.predict_proba(sample)[0]
+        classes = model.classes_
 
-    prediction = model.predict(sample)
+        # Top 5 crops
+        top_indices = probs.argsort()[-5:][::-1]
 
-    return jsonify({
-        "pincode": pincode,
-        "season": season,
-        "recommended_crop": prediction[0],
-        "used_values": {
-            "soil": soil,
-            "weather": weather
-        }
-    })
+        results = []
+        for i in top_indices:
+            crop = classes[i]
+            prob = probs[i]
+
+            results.append({
+                "crop": crop,
+                "confidence": round(float(prob) * 100, 2),
+                "reasons": get_reason(crop, weather, soil, farm_size)
+            })
+
+        return jsonify({
+            "pincode": pincode,
+            "season": season,
+            "farm_size": farm_size,
+            "recommended_crops": results,
+            "used_values": {
+                "soil": soil,
+                "weather": weather
+            }
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
