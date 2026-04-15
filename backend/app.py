@@ -3,79 +3,130 @@ from flask_cors import CORS
 import pickle
 import pandas as pd
 import os
-import random
+import requests
+
+# 🔥 IMPORT IRRIGATION LOGIC
+from irrigation import (
+    load_irrigation_model,
+    estimate_soil_moisture,
+    predict_level,
+    calculate_water,
+    generate_reason
+)
 
 app = Flask(__name__)
 CORS(app)
 
-# Load model
+# ================= CONFIG =================
+API_KEY = "ae6d4369621e4f36c60da4059267cb71"   # replace later
+
+# ================= LOAD CROP MODEL =================
 model_path = os.path.join(os.path.dirname(__file__), '../ml-model/crop_model.pkl')
 with open(model_path, 'rb') as f:
     model = pickle.load(f)
 
-# --- Helper: simulate weather based on season ---
-def get_weather(season):
-    season = season.lower()
+# ================= LOAD IRRIGATION MODEL =================
+irrigation_model_path = os.path.join(os.path.dirname(__file__), '../ml-model/irrigation_model.pkl')
+irrigation_model, irrigation_encoders, irrigation_target = load_irrigation_model(irrigation_model_path)
 
-    if season == "kharif":
-        return {
-            "temperature": random.uniform(25, 35),
-            "humidity": random.uniform(70, 90),
-            "rainfall": random.uniform(150, 300)
-        }
-    elif season == "rabi":
-        return {
-            "temperature": random.uniform(15, 25),
-            "humidity": random.uniform(40, 60),
-            "rainfall": random.uniform(20, 100)
-        }
-    else:  # zaid
-        return {
-            "temperature": random.uniform(30, 40),
-            "humidity": random.uniform(20, 50),
-            "rainfall": random.uniform(10, 50)
-        }
+# ================= LOAD DATA =================
+pincode_df = pd.read_csv('../data/pincode-dataset.csv')
+soil_df = pd.read_csv('../data/soil_data.csv')
+rain_df = pd.read_csv('../data/seasonal_rainfall.csv')
 
-# --- Helper: default soil values ---
+# Normalize
+pincode_df.columns = pincode_df.columns.str.lower().str.strip()
+soil_df.columns = soil_df.columns.str.lower().str.strip()
+rain_df.columns = rain_df.columns.str.lower().str.strip()
+
+# ================= FIX SOIL =================
+soil_df.rename(columns={
+    'a district': 'district',
+    'nitrogen value': 'n',
+    'phosphorous value': 'p',
+    'potassium value': 'k',
+    'ph': 'ph'
+}, inplace=True)
+
+soil_df[['n','p','k','ph']] = soil_df[['n','p','k','ph']].apply(pd.to_numeric, errors='coerce')
+
+soil_grouped = soil_df.groupby('district').mean(numeric_only=True).reset_index()
+
+# ================= PINCODE → DISTRICT =================
+def get_district(pincode):
+    try:
+        pincode = int(pincode)
+    except:
+        return None
+
+    pin_col = next((c for c in ['pincode','pin','postalcode'] if c in pincode_df.columns), None)
+    dist_col = next((c for c in ['district','districtname'] if c in pincode_df.columns), None)
+
+    if not pin_col or not dist_col:
+        return None
+
+    row = pincode_df[pincode_df[pin_col] == pincode]
+    if row.empty:
+        return None
+
+    return str(row.iloc[0][dist_col]).strip()
+
+# ================= SOIL =================
 def get_soil_values(pincode):
-    # Future: replace with real soil API / dataset
+    district = get_district(pincode)
+    if not district:
+        return None
+
+    row = soil_grouped[soil_grouped['district'].str.lower() == district.lower()]
+    if row.empty:
+        return None
+
+    row = row.iloc[0]
+
     return {
-        "N": random.randint(30, 70),
-        "P": random.randint(20, 60),
-        "K": random.randint(20, 60),
-        "ph": round(random.uniform(5.5, 7.5), 2)
+        "N": round(row['n'], 2),
+        "P": round(row['p'], 2),
+        "K": round(row['k'], 2),
+        "ph": round(row['ph'], 2),
+        "district": district
     }
 
-# --- Reasoning engine ---
-def get_reason(crop, weather, soil, farm_size):
-    reasons = []
+# ================= WEATHER =================
+def get_weather(district):
+    try:
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={district},IN&appid={API_KEY}&units=metric"
+        response = requests.get(url)
+        data = response.json()
 
-    # Weather-based reasoning
-    if weather["rainfall"] > 150:
-        reasons.append("Suitable for high rainfall")
-    elif weather["rainfall"] < 50:
-        reasons.append("Suitable for low rainfall conditions")
+        if response.status_code != 200:
+            return {"temperature": 30, "humidity": 60}
 
-    # Soil-based reasoning
-    if 6 <= soil["ph"] <= 7:
-        reasons.append("Optimal soil pH")
-    else:
-        reasons.append("Tolerates varied soil pH")
+        return {
+            "temperature": data['main']['temp'],
+            "humidity": data['main']['humidity']
+        }
 
-    # Farm size reasoning
-    if farm_size < 2:
-        reasons.append("Good for small-scale farming")
-    elif farm_size > 5:
-        reasons.append("Suitable for large-scale farming")
-    else:
-        reasons.append("Moderate farm size compatible")
+    except:
+        return {"temperature": 30, "humidity": 60}
 
-    return reasons
+# ================= RAINFALL =================
+def get_rainfall(district, season):
+    row = rain_df[
+        (rain_df['district'].str.lower() == district.lower()) &
+        (rain_df['season'].str.lower() == season.lower())
+    ]
 
+    if row.empty:
+        return 50
+
+    return float(row.iloc[0]['monthly_rainfall'])
+
+# ================= ROUTES =================
 @app.route('/')
 def home():
     return "FarmMate 360 Backend Running"
 
+# ================= 🌱 CROP =================
 @app.route('/predict', methods=['POST'])
 def predict():
     try:
@@ -86,13 +137,15 @@ def predict():
         farm_size = float(data.get('farm_size', 1))
 
         if not pincode or not season:
-            return jsonify({"error": "Missing pincode or season"}), 400
+            return jsonify({"error": "Missing input"}), 400
 
-        # Simulated inputs
-        weather = get_weather(season)
         soil = get_soil_values(pincode)
+        if not soil:
+            return jsonify({"error": "Invalid pincode"}), 400
 
-        # Model input
+        weather = get_weather(soil["district"])
+        rainfall = get_rainfall(soil["district"], season)
+
         sample = pd.DataFrame([{
             'N': soil['N'],
             'P': soil['P'],
@@ -100,40 +153,127 @@ def predict():
             'temperature': weather['temperature'],
             'humidity': weather['humidity'],
             'ph': soil['ph'],
-            'rainfall': weather['rainfall']
+            'rainfall': rainfall
         }])
 
-        # Get probabilities
         probs = model.predict_proba(sample)[0]
         classes = model.classes_
 
-        # Top 5 crops
         top_indices = probs.argsort()[-5:][::-1]
 
         results = []
         for i in top_indices:
-            crop = classes[i]
-            prob = probs[i]
-
             results.append({
-                "crop": crop,
-                "confidence": round(float(prob) * 100, 2),
-                "reasons": get_reason(crop, weather, soil, farm_size)
+                "crop": classes[i],
+                "confidence": round(float(probs[i]) * 100, 2),
+                "reasons": [
+                    "Based on soil nutrients",
+                    "Weather conditions are suitable",
+                    "Season compatibility"
+                ]
             })
 
         return jsonify({
             "pincode": pincode,
+            "district": soil["district"],
             "season": season,
             "farm_size": farm_size,
             "recommended_crops": results,
             "used_values": {
                 "soil": soil,
-                "weather": weather
+                "weather": {
+                    "temperature": weather["temperature"],
+                    "humidity": weather["humidity"],
+                    "rainfall": rainfall
+                }
             }
         })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# ================= 💧 IRRIGATION =================
+@app.route('/predict_irrigation', methods=['POST'])
+def predict_irrigation():
+    try:
+        data = request.json
+
+        pincode = data['pincode']
+        crop = data['crop']
+        season = data['season']
+        area = float(data['area'])
+        flow = float(data['flow'])
+
+        soil = get_soil_values(pincode)
+        if not soil:
+            return jsonify({"error": "Invalid pincode"}), 400
+
+        district = soil["district"]
+
+        weather = get_weather(district)
+        rainfall = get_rainfall(district, season)
+
+        soil_moisture = estimate_soil_moisture(
+            rainfall,
+            weather["temperature"],
+            weather["humidity"]
+        )
+
+        model_input = {
+            "soil_ph": soil["ph"],
+            "soil_moisture": soil_moisture,
+            "temperature_c": weather["temperature"],
+            "humidity": weather["humidity"],
+            "rainfall_mm": rainfall,
+            "crop_type": crop.lower(),
+            "season": season.lower(),
+            "previous_irrigation_mm": rainfall * 0.3
+        }
+
+        level = predict_level(
+            irrigation_model,
+            irrigation_encoders,
+            irrigation_target,
+            model_input
+        )
+
+        water, time = calculate_water(
+            crop,
+            weather["temperature"],
+            weather["humidity"],
+            rainfall,
+            soil_moisture,
+            area,
+            flow
+        )
+
+        # 🔥 FIX: consistency
+        if water < 1:
+            water = 0
+            time = 0
+            level = "Low"
+
+        reasons = generate_reason(
+            weather["temperature"],
+            weather["humidity"],
+            rainfall,
+            soil_moisture,
+            level
+        )
+
+        return jsonify({
+            "water_litres": round(water, 2),
+            "time_hours": round(time, 2),
+            "level": level,
+            "soil_moisture": round(soil_moisture, 2),
+            "ph": soil["ph"],
+            "reasons": reasons
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# ================= RUN =================
 if __name__ == '__main__':
+    print("System Ready 🚀")
     app.run(debug=True)
