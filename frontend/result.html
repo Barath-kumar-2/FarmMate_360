@@ -3,36 +3,81 @@
 <head>
     <meta charset="UTF-8">
     <title>Recommendation Result</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Bootstrap -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
+
 <body class="bg-light">
 
 <div class="container mt-5">
+
     <h2 class="text-center mb-4">🌾 Recommended Crops</h2>
 
     <div id="result"></div>
+
 </div>
 
 <script>
 function getData() {
     const params = new URLSearchParams(window.location.search);
-    const data = JSON.parse(decodeURIComponent(params.get("data")));
+    const rawData = params.get("data");
+
+    if (!rawData) {
+        document.getElementById("result").innerHTML =
+            "<div class='alert alert-danger'>No data found</div>";
+        return;
+    }
+
+    const data = JSON.parse(decodeURIComponent(rawData));
 
     const resultDiv = document.getElementById("result");
 
     let html = `
-        <div class="card p-3 mb-4 shadow">
-            <h5>Pincode: ${data.pincode}</h5>
-            <h5>Season: ${data.season}</h5>
-            <h5>Farm Size: ${data.farm_size} acres</h5>
+        <!-- Location + Weather + Soil -->
+        <div class="card p-4 mb-4 shadow">
+
+            <h5>📍 Location Details</h5>
+            <p><strong>Pincode:</strong> ${data.pincode}</p>
+            <p><strong>District:</strong> ${data.district}</p>
+            <p><strong>Season:</strong> ${data.season}</p>
+            <p><strong>Farm Size:</strong> ${data.farm_size} acres</p>
+
+            <hr>
+
+            <h5>🌦️ Current Weather</h5>
+            <p><strong>Temperature:</strong> ${data.used_values.weather.temperature} °C</p>
+            <p><strong>Humidity:</strong> ${data.used_values.weather.humidity} %</p>
+            <p><strong>Rainfall:</strong> ${data.used_values.weather.rainfall} mm</p>
+
+            <hr>
+
+            <h5>🌱 Soil Data</h5>
+            <p><strong>N:</strong> ${data.used_values.soil.N}</p>
+            <p><strong>P:</strong> ${data.used_values.soil.P}</p>
+            <p><strong>K:</strong> ${data.used_values.soil.K}</p>
+            <p><strong>pH:</strong> ${data.used_values.soil.ph}</p>
+
         </div>
     `;
 
+    // 🏆 Best Crop Highlight
+    if (data.recommended_crops && data.recommended_crops.length > 0) {
+        html += `
+            <div class="alert alert-success text-center shadow">
+                🏆 Best Crop: <strong>${data.recommended_crops[0].crop}</strong>
+            </div>
+        `;
+    }
+
+    // 🌾 Crop Cards
     data.recommended_crops.forEach(crop => {
         html += `
             <div class="card p-3 mb-3 shadow">
                 <h4>${crop.crop}</h4>
                 <p><strong>Confidence:</strong> ${crop.confidence}%</p>
+
                 <p><strong>Reasons:</strong></p>
                 <ul>
                     ${crop.reasons.map(r => `<li>${r}</li>`).join("")}
