@@ -168,7 +168,7 @@ def calculate_water(crop, temp, humidity, rainfall, soil_moisture, area, flow):
 # ================= ROUTES =================
 @app.route('/')
 def home():
-    return "Backend Running 🚀"
+    return render_template('index.html')
 
 
 # ================= CROP RECOMMENDATION =================
