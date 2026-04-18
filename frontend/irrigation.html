@@ -2,109 +2,181 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Irrigation Predictor</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; }
+        .hero { background: linear-gradient(135deg, #1a936f, #114b5f); color: white; padding: 30px 20px; text-align: center; border-radius: 0 0 20px 20px; margin-bottom: 24px; }
+        .card { border: none; border-radius: 16px; }
+        .btn-success { background: #1a936f; border: none; border-radius: 10px; padding: 12px; font-size: 1rem; }
+        .btn-success:hover { background: #114b5f; }
+        .result-card { border-left: 5px solid #1a936f; border-radius: 16px; }
+        .level-high { border-left-color: #dc3545 !important; }
+        .level-medium { border-left-color: #ffc107 !important; }
+        .level-low { border-left-color: #1a936f !important; }
+        .badge-high { background-color: #dc3545; }
+        .badge-medium { background-color: #ffc107; color: #000; }
+        .badge-low { background-color: #1a936f; }
+    </style>
 </head>
 <body class="bg-light">
 
-<div class="container mt-5">
-    <h2 class="text-center mb-4">💧 Irrigation Requirement</h2>
+<div class="hero">
+    <h2>💧 Irrigation Requirement</h2>
+    <p class="mb-0 opacity-75">Smart irrigation planning for your farm</p>
+</div>
 
-    <div class="card p-4 shadow">
+<div class="container pb-5">
 
-        <div class="row">
-            <div class="col-md-6 mb-3">
-                <label>Pincode</label>
-                <input type="text" id="pincode" class="form-control">
+    <div class="card p-4 shadow-sm mb-4">
+        <div class="row g-3">
+            <div class="col-6">
+                <label class="form-label fw-semibold">📍 Pincode</label>
+                <input type="text" id="pincode" class="form-control" placeholder="e.g. 600001" inputmode="numeric">
             </div>
 
-            <div class="col-md-6 mb-3">
-                <label>Crop Type</label>
-                <input type="text" id="crop" class="form-control" placeholder="e.g. rice, wheat">
+            <div class="col-6">
+                <label class="form-label fw-semibold">🌾 Crop Type</label>
+                <input type="text" id="crop" class="form-control" placeholder="e.g. rice">
             </div>
 
-            <div class="col-md-6 mb-3">
-                <label>Season</label>
-                <select id="season" class="form-control">
-                    <option>Kharif</option>
-                    <option>Rabi</option>
-                    <option>Zaid</option>
+            <div class="col-6">
+                <label class="form-label fw-semibold">🗓 Season</label>
+                <select id="season" class="form-select">
+                    <option value="kharif">Kharif</option>
+                    <option value="rabi">Rabi</option>
+                    <option value="zaid">Zaid</option>
                 </select>
             </div>
 
-            <div class="col-md-6 mb-3">
-                <label>Area (acres)</label>
-                <input type="number" id="area" class="form-control">
+            <div class="col-6">
+                <label class="form-label fw-semibold">📐 Area (acres)</label>
+                <input type="number" id="area" class="form-control" placeholder="e.g. 2" inputmode="decimal">
             </div>
 
-            <div class="col-md-6 mb-3">
-                <label>Pump Flow Rate (litre/sec)</label>
-                <input type="number" id="flow" class="form-control">
+            <div class="col-12">
+                <label class="form-label fw-semibold">🚿 Pump Flow Rate (litre/sec)</label>
+                <input type="number" id="flow" class="form-control" placeholder="e.g. 10" inputmode="decimal">
             </div>
         </div>
 
-        <button onclick="predictIrrigation()" class="btn btn-success w-100">
-            Predict Irrigation
-        </button>
+        <div id="error" class="text-danger mt-3 text-center fw-semibold"></div>
 
+        <button onclick="predictIrrigation()" class="btn btn-success w-100 mt-3" id="predictBtn">
+            💧 Predict Irrigation
+        </button>
     </div>
 
     <!-- RESULT -->
-    <div class="mt-4 text-center">
-        <div id="result" class="card p-3 shadow d-none"></div>
+    <div id="result" class="card p-4 shadow-sm result-card d-none">
+        <div id="resultContent"></div>
     </div>
 
 </div>
 
 <script>
 async function predictIrrigation() {
+    const pincode  = document.getElementById("pincode").value.trim();
+    const crop     = document.getElementById("crop").value.trim();
+    const season   = document.getElementById("season").value;
+    const area     = parseFloat(document.getElementById("area").value);
+    const flow     = parseFloat(document.getElementById("flow").value);
+    const errorDiv = document.getElementById("error");
 
-    const data = {
-        pincode: document.getElementById("pincode").value,
-        crop: document.getElementById("crop").value,
-        season: document.getElementById("season").value,
-        area: parseFloat(document.getElementById("area").value),
-        flow: parseFloat(document.getElementById("flow").value)
-    };
+    errorDiv.innerText = "";
 
-    const res = await fetch("/predict_irrigation", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data)
-    });
-
-    const result = await res.json();
-
-    const resultDiv = document.getElementById("result");
-    resultDiv.classList.remove("d-none");
-
-    if (result.error) {
-        resultDiv.innerHTML = `<span class="text-danger">${result.error}</span>`;
+    if (!pincode || !crop || isNaN(area) || isNaN(flow)) {
+        errorDiv.innerText = "⚠️ Please fill in all fields correctly.";
         return;
     }
 
-    // Color coding
-    let color = "text-success";
-    if (result.level === "Medium") color = "text-warning";
-    if (result.level === "High") color = "text-danger";
+    const btn = document.getElementById("predictBtn");
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Predicting...`;
 
-    resultDiv.innerHTML = `
-        <h4 class="${color}">📊 Irrigation Level: ${result.level}</h4>
-        <p>💧 Water Needed: <b>${result.water_litres}</b> litres</p>
-        <p>⏱ Time Required: <b>${result.time_hours}</b> hours</p>
+    const resultDiv     = document.getElementById("result");
+    const resultContent = document.getElementById("resultContent");
+    resultDiv.classList.add("d-none");
 
-        <hr>
+    try {
+        const res = await fetch("/predict_irrigation", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pincode, crop, season, area, flow })
+        });
 
-        <p>🌱 Soil pH: ${result.ph}</p>
-        <p>💧 Soil Moisture: ${result.soil_moisture}%</p>
+        const result = await res.json();
 
-        <hr>
+        if (result.error) {
+            errorDiv.innerText = "❌ " + result.error;
+            return;
+        }
 
-        <h5>🧠 Reasoning:</h5>
-        <ul>
-            ${result.reasons.map(r => `<li>${r}</li>`).join("")}
-        </ul>
-    `;
+        // lowercase comparison fix
+        const level = (result.level || "").toLowerCase();
+        let badgeClass = "badge-low";
+        let levelClass = "level-low";
+        if (level === "high")   { badgeClass = "badge-high";   levelClass = "level-high"; }
+        if (level === "medium") { badgeClass = "badge-medium"; levelClass = "level-medium"; }
+
+        resultDiv.className = `card p-4 shadow-sm result-card ${levelClass}`;
+
+        resultContent.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0">📊 Irrigation Result</h5>
+                <span class="badge ${badgeClass} px-3 py-2 fs-6">${result.level.toUpperCase()}</span>
+            </div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-6">
+                    <div class="bg-white rounded-3 p-3 text-center shadow-sm">
+                        <div class="fs-4">💧</div>
+                        <div class="fw-bold fs-5">${result.water_litres.toLocaleString()}</div>
+                        <div class="text-muted small">Litres needed</div>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="bg-white rounded-3 p-3 text-center shadow-sm">
+                        <div class="fs-4">⏱</div>
+                        <div class="fw-bold fs-5">${result.time_hours}</div>
+                        <div class="text-muted small">Hours required</div>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="bg-white rounded-3 p-3 text-center shadow-sm">
+                        <div class="fs-4">🌱</div>
+                        <div class="fw-bold fs-5">${result.ph}</div>
+                        <div class="text-muted small">Soil pH</div>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="bg-white rounded-3 p-3 text-center shadow-sm">
+                        <div class="fs-4">💦</div>
+                        <div class="fw-bold fs-5">${result.soil_moisture}%</div>
+                        <div class="text-muted small">Soil Moisture</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="alert alert-info mb-3">
+                <strong>🔔 Decision:</strong> ${result.decision}
+            </div>
+
+            <h6 class="fw-bold">🧠 Reasoning:</h6>
+            <ul class="mb-0">
+                ${result.reasons.map(r => `<li>${r}</li>`).join("")}
+            </ul>
+        `;
+
+        resultDiv.classList.remove("d-none");
+
+    } catch (err) {
+        errorDiv.innerText = "❌ Something went wrong. Please try again.";
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = "💧 Predict Irrigation";
+    }
 }
 </script>
 
