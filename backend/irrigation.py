@@ -9,7 +9,8 @@ def load_irrigation_model(path):
 
 # ================= SOIL MOISTURE =================
 def estimate_soil_moisture(rainfall, temp, humidity):
-    moisture = (rainfall * 0.5) + (humidity * 0.3) - (temp * 0.2)
+    rainfall_daily = rainfall / 30
+    moisture = (rainfall_daily * 2) + (humidity * 0.3) - (temp * 0.2)
     return max(10, min(moisture, 90))
 
 # ================= ML =================
@@ -43,59 +44,46 @@ kc_map = {
 
 def calculate_water(crop, temp, humidity, rainfall, soil_moisture, area, flow,
                     flow_unit="lps"):
-    """
-    Calculate irrigation water requirement.
-
-    Parameters
-    ----------
-    crop          : str   — crop name (matched against kc_map; defaults to 1.0)
-    temp          : float — temperature in °C
-    humidity      : float — relative humidity 0–100
-    rainfall      : float — monthly rainfall in mm
-    soil_moisture : float — estimated soil moisture 10–90
-    area          : float — farm area in acres
-    flow          : float — pump flow rate
-    flow_unit     : str   — "lps" (litres/sec, default) or "lph" (litres/hour)
-
-    Returns
-    -------
-    (water_litres, time_hours)
-
-    Method: Hargreaves-simplified ET0, scaled by crop coefficient (Kc),
-    adjusted for effective rainfall and current soil moisture.
-    """
 
     kc = kc_map.get(crop.lower(), 1.0)
 
-    # Solar radiation proxy: clear-sky Rs ~18 MJ/m²/day; cloud cover
-    # (estimated from humidity) reduces it.
-    Rs           = 18 * (1 - 0.5 * (humidity / 100))   # MJ/m²/day
-    ET0_daily    = 0.0135 * (temp + 17.8) * Rs          # mm/day (Hargreaves)
-    ET0_monthly  = ET0_daily * 30                        # mm/month
+    # ---- STEP 1: Solar Radiation ----
+    Rs = 18 * (1 - 0.5 * (humidity / 100))   # MJ/m²/day
 
-    ETc = kc * ET0_monthly                               # crop water need, mm/month
+    # ---- STEP 2: ET0 (DAILY) ----
+    ET0_daily = 0.0135 * (temp + 17.8) * Rs   # mm/day
 
-    effective_rainfall = rainfall * 0.8                  # 80 % effectiveness
+    # ---- STEP 3: Crop ET (DAILY) ----
+    ETc = kc * ET0_daily                      # mm/day
 
-    # Soil moisture adjustment factor
-    if soil_moisture > 70:
+    # ---- STEP 4: Convert rainfall → DAILY ----
+    rainfall_daily = rainfall / 30            # mm/day
+    effective_rainfall = rainfall_daily * 0.8
+
+    # ---- STEP 5: Soil Moisture Factor (IMPROVED) ----
+    if soil_moisture > 85:
+        factor = 0.1
+    elif soil_moisture > 70:
         factor = 0.3
-    elif soil_moisture > 40:
+    elif soil_moisture > 50:
         factor = 0.6
     else:
         factor = 1.0
 
+    # ---- STEP 6: Net Irrigation ----
     net_irrigation_mm = max(ETc - effective_rainfall, 0) * factor
 
-    area_m2       = area * 4046.86                       # acres → m²
-    water_litres  = net_irrigation_mm * area_m2          # mm × m² = litres
+    # ---- STEP 7: Area Conversion ----
+    area_m2 = area * 4046.86
 
-    # BUG FIX: support both litres/sec and litres/hour so the caller can
-    # pass whatever unit the pump spec uses without silent unit errors.
+    # ---- STEP 8: Final Water (LITRES PER DAY) ----
+    water_litres = net_irrigation_mm * area_m2
+
+    # ---- STEP 9: Time Calculation ----
     if flow > 0 and water_litres > 0:
         if flow_unit == "lph":
-            time_hours = water_litres / flow             # already in hours
-        else:                                            # default: lps
+            time_hours = water_litres / flow
+        else:
             time_hours = (water_litres / flow) / 3600
     else:
         time_hours = 0.0
