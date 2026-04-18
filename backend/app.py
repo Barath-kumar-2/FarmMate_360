@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import pickle
 import pandas as pd
@@ -12,13 +12,13 @@ from irrigation import (
     generate_reason
 )
 
-app = Flask(__name__, template_folder=os.path.join(BASE_DIR, '../frontend'))
-CORS(app)
-
 # ================= CONFIG =================
 API_KEY = "ae6d4369621e4f36c60da4059267cb71"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+app = Flask(__name__, template_folder=os.path.join(BASE_DIR, '../frontend'))
+CORS(app)
 
 # ================= LOAD MODELS =================
 with open(os.path.join(BASE_DIR, '../ml-model/crop_model.pkl'), 'rb') as f:
@@ -86,8 +86,6 @@ def get_soil_values(pincode):
         "N":        round(row['n'],  2),
         "P":        round(row['p'],  2),
         "K":        round(row['k'],  2),
-        # BUG FIX: use 7.0 (neutral pH) as fallback if NaN, so the model never
-        # receives None and throws a TypeError inside predict_proba / predict
         "ph":       round(row['ph'], 2) if pd.notna(row['ph']) else 7.0,
         "district": district
     }
@@ -166,11 +164,21 @@ def calculate_water(crop, temp, humidity, rainfall, soil_moisture, area, flow):
 
 
 # ================= ROUTES =================
-from flask import Flask, request, jsonify, render_template
-
 @app.route('/')
 def home():
     return render_template('index.html')
+
+@app.route('/crop')
+def crop_page():
+    return render_template('crop.html')
+
+@app.route('/irrigation')
+def irrigation_page():
+    return render_template('irrigation.html')
+
+@app.route('/result')
+def result_page():
+    return render_template('result.html')
 
 
 # ================= CROP RECOMMENDATION =================
@@ -246,7 +254,6 @@ def predict_irrigation():
     try:
         data = request.json
 
-        # Validate all required fields upfront
         required = ['pincode', 'crop', 'season', 'area', 'flow']
         missing  = [f for f in required if not data.get(f) and data.get(f) != 0]
         if missing:
@@ -272,8 +279,6 @@ def predict_irrigation():
             weather["humidity"]
         )
 
-        # -------- ML PREDICTION --------
-        # soil["ph"] is always a float now (7.0 fallback), safe to pass directly
         try:
             level = predict_level(
                 irrigation_model,
@@ -293,7 +298,6 @@ def predict_irrigation():
         except ValueError as ve:
             return jsonify({"error": f"Irrigation model error: {ve}"}), 422
 
-        # -------- PHYSICS --------
         water, time = calculate_water(
             crop,
             weather["temperature"],
@@ -304,7 +308,6 @@ def predict_irrigation():
             flow
         )
 
-        # -------- RULE OVERRIDE --------
         water_per_acre = water / area if area > 0 else 0
 
         if soil_moisture < 35 or water_per_acre > 30000:
@@ -314,7 +317,6 @@ def predict_irrigation():
         else:
             level = "low"
 
-        # -------- DECISION LAYER --------
         if soil_moisture > 80:
             decision = "Skip irrigation today"
         elif soil_moisture > 60:
