@@ -12,7 +12,7 @@ from irrigation import (
     generate_reason
 )
 
-app = Flask(__name__)
+app = Flask(__name__, template_folder=os.path.join(BASE_DIR, '../frontend'))
 CORS(app)
 
 # ================= CONFIG =================
@@ -166,9 +166,11 @@ def calculate_water(crop, temp, humidity, rainfall, soil_moisture, area, flow):
 
 
 # ================= ROUTES =================
+from flask import Flask, request, jsonify, render_template
+
 @app.route('/')
 def home():
-    return ('index.html')
+    return render_template('index.html')
 
 
 # ================= CROP RECOMMENDATION =================
