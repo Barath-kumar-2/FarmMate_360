@@ -67,7 +67,7 @@ async function predictIrrigation() {
         flow: parseFloat(document.getElementById("flow").value)
     };
 
-    const res = await fetch("http://127.0.0.1:5000/predict_irrigation", {
+    const res = await fetch("/predict_irrigation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data)
